@@ -1,0 +1,15 @@
+[submodule "discovery-service"]
+	path = discovery-service
+	url = https://github.com/DedovaA/discovery-service.git
+[submodule "config-server"]
+	path = config-server
+	url = https://github.com/DedovaA/config-server.git
+[submodule "gateway_service"]
+	path = gateway_service
+	url = https://github.com/DedovaA/gateway_service.git
+[submodule "user-service"]
+	path = user-service
+	url = https://github.com/DedovaA/user-service.git
+[submodule "notification-service"]
+	path = notification-service
+	url = https://github.com/DedovaA/notification-service.git
