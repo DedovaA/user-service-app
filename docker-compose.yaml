@@ -8,6 +8,12 @@ services:
       - app-network
     ports:
       - "8761:8761"
+    healthcheck:
+      # Проверяем доступность главной страницы Eureka
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8761/"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
       
   # --- 2. CONFIG SERVER (Основа системы) ---
   config-server:
@@ -16,15 +22,25 @@ services:
     container_name: config-server
     depends_on:
       discovery-service:
-        condition: service_started
+        condition: service_healthy
+    volumes:
+      # Путь слева — на диске, путь справа — как указано в твоем application.yml конфиг-сервера
+      - ./config-server/central-configs:/app/central-configs
     environment:
-      SPRING_PROFILES_ACTIVE: native
+#      SPRING_CLOUD_CONFIG_SERVER_NATIVE_SEARCH_LOCATIONS: file:/app/central-configs/
       # Указываем ему, где находится Eureka Адрес сервера Eureka
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-service:8761/eureka/
-      # Включаем регистрацию
-      SPRING_CLOUD_CONFIG_SERVER_BOOTSTRAP: "true"
+      SPRING_PROFILES_ACTIVE: native # Ищем конфиги внутри контейнера (или git)
     networks:
       - app-network
+    ports:
+      - "8888:8888"
+    healthcheck:
+      # Проверяем, что Config Server поднялся и слушает порт 8888
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8888/application/default"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
       
   # --- 3. DATABASE (PostgreSQL для User-Service) ---
   postgres-db:
@@ -66,15 +82,15 @@ services:
   # --- 5. MAILHOG (Тестирование почты) ---
   mailhog:
     image: mailhog/mailhog
-    container_name: mailhog2
     networks:
       - app-network
     ports:
-      - "1025:1025"
+      - "1025:1025" # SMTP сервер
+      - "8025:8025" # UI для просмотра писем в браузере
       
   # --- 6. USER-SERVICE (Producer) ---
   user-service:
-    image: user-service
+#    image: user-service
     build: 
       context: ./user-service
     container_name: user-service
@@ -84,28 +100,29 @@ services:
       kafka:
         condition: service_started
       discovery-service:
-        condition: service_started
+        condition: service_healthy
       config-server:
-        condition: service_started
+        condition: service_healthy
     environment:
+      SERVER_PORT: 8083
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-db:5432/${DB_NAME}
-      SPRING_DATASOURCE_USER: ${DB_USER}
+      SPRING_DATASOURCE_USERNAME: ${DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+#      SPRING_PROFILES_ACTIVE: native
+      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-service:8761/eureka/
-      # Включаем регистрацию
-      SPRING_CLOUD_CONFIG_SERVER_BOOTSTRAP: "true"
       # искать config-server через discovery
-      SPRING_CLOUD_CONFIG_DISCOVERY_ENABLED: "true"
-      SPRING_CLOUD_CONFIG_DISCOVERY_SERVICE_ID: config-server
+#      SPRING_CLOUD_CONFIG_DISCOVERY_ENABLED: "true"
+#      SPRING_CLOUD_CONFIG_DISCOVERY_SERVICE_ID: config-server
     networks:
       - app-network
     ports:
-      - "8083:8083" # Swagger будет доступен по localhost:8083
+      - "8083:8083"
 
   # --- 7. NOTIFICATION-SERVICE (Consumer) ---
   notification-service:
-    image: notification-service
+#    image: notification-service
     build:
       context: ./notification-service
     container_name: notification-service
@@ -113,16 +130,17 @@ services:
       kafka:
         condition: service_started
       discovery-service:
-        condition: service_started
+        condition: service_healthy
       config-server:
-        condition: service_started
+        condition: service_healthy
     environment:
+      SERVER_PORT: 8082
       SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      SPRING_MAIL_HOST: mailhog2
+      SPRING_MAIL_HOST: mailhog
       SPRING_MAIL_PORT: 1025
+#      SPRING_PROFILES_ACTIVE: native
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-service:8761/eureka/
-      # Включаем регистрацию
-      SPRING_CLOUD_CONFIG_SERVER_BOOTSTRAP: "true"
+      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
       # искать config-server через discovery
       SPRING_CLOUD_CONFIG_DISCOVERY_ENABLED: "true"
       SPRING_CLOUD_CONFIG_DISCOVERY_SERVICE_ID: config-server
@@ -133,19 +151,22 @@ services:
 
   # --- 8. API GATEWAY ---
   gateway:
-    image: gateway-service
+#    image: gateway-service
     build:
       context: ./gateway_service
     container_name: gateway-service
     depends_on:
       discovery-service:
-        condition: service_started
+        condition: service_healthy
       config-server:
-        condition: service_started
+        condition: service_healthy
     environment:
+#      SERVER_PORT: 8080
+#      SPRING_PROFILES_ACTIVE: native
       EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-service:8761/eureka/
-      # Включаем регистрацию
-      SPRING_CLOUD_CONFIG_SERVER_BOOTSTRAP: "true"
+      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
+#      SPRING_CLOUD_CONFIG_ALLOW_OVERRIDE: rue
+#      SPRING_CLOUD_CONFIG_OVERRIDE_SYSTEM_PROPERTIES: false
       # искать config-server через discovery
       SPRING_CLOUD_CONFIG_DISCOVERY_ENABLED: "true"
       SPRING_CLOUD_CONFIG_DISCOVERY_SERVICE_ID: config-server
