@@ -1,0 +1,160 @@
+services:
+  # --- 1. DISCOVERY SERVICE (Eureka) ---
+  discovery-service:
+    build:
+      context: ./discovery-service
+    container_name: discovery-service
+    networks:
+      - app-network
+    ports:
+      - "8761:8761"
+      
+  # --- 2. CONFIG SERVER (Основа системы) ---
+  config-server:
+    build:
+      context: ./config-server
+    container_name: config-server
+    depends_on:
+      discovery-service:
+        condition: service_started
+    environment:
+      SPRING_PROFILES_ACTIVE: native
+      # Указываем ему, где находится Eureka Адрес сервера Eureka
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-service:8761/eureka/
+      # Включаем регистрацию
+      SPRING_CLOUD_CONFIG_SERVER_BOOTSTRAP: "true"
+    networks:
+      - app-network
+      
+  # --- 3. DATABASE (PostgreSQL для User-Service) ---
+  postgres-db:
+    image: postgres:latest # Готовый образ из Docker Hub
+    container_name: postgres-db
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    networks:
+      - app-network
+    ports:
+      - "5432:5432"
+
+  # --- 4. MESSAGE BROKER (Kafka + Zookeeper) ---
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    networks:
+      - app-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      zookeeper:
+        condition: service_started 
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      # Настройка адреса, по которому сервисы внутри сети будут обращаться к Kafka
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    networks:
+      - app-network
+    ports:
+      - "9092:9092"
+
+  # --- 5. MAILHOG (Тестирование почты) ---
+  mailhog:
+    image: mailhog/mailhog
+    container_name: mailhog2
+    networks:
+      - app-network
+    ports:
+      - "1025:1025"
+      
+  # --- 6. USER-SERVICE (Producer) ---
+  user-service:
+    image: user-service
+    build: 
+      context: ./user-service
+    container_name: user-service
+    depends_on:
+      postgres-db:
+        condition: service_started
+      kafka:
+        condition: service_started
+      discovery-service:
+        condition: service_started
+      config-server:
+        condition: service_started
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-db:5432/${DB_NAME}
+      SPRING_DATASOURCE_USER: ${DB_USER}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-service:8761/eureka/
+      # Включаем регистрацию
+      SPRING_CLOUD_CONFIG_SERVER_BOOTSTRAP: "true"
+      # искать config-server через discovery
+      SPRING_CLOUD_CONFIG_DISCOVERY_ENABLED: "true"
+      SPRING_CLOUD_CONFIG_DISCOVERY_SERVICE_ID: config-server
+    networks:
+      - app-network
+    ports:
+      - "8083:8083" # Swagger будет доступен по localhost:8083
+
+  # --- 7. NOTIFICATION-SERVICE (Consumer) ---
+  notification-service:
+    image: notification-service
+    build:
+      context: ./notification-service
+    container_name: notification-service
+    depends_on:
+      kafka:
+        condition: service_started
+      discovery-service:
+        condition: service_started
+      config-server:
+        condition: service_started
+    environment:
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SPRING_MAIL_HOST: mailhog2
+      SPRING_MAIL_PORT: 1025
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-service:8761/eureka/
+      # Включаем регистрацию
+      SPRING_CLOUD_CONFIG_SERVER_BOOTSTRAP: "true"
+      # искать config-server через discovery
+      SPRING_CLOUD_CONFIG_DISCOVERY_ENABLED: "true"
+      SPRING_CLOUD_CONFIG_DISCOVERY_SERVICE_ID: config-server
+    networks:
+      - app-network
+    ports:
+      - "8082:8082"
+
+  # --- 8. API GATEWAY ---
+  gateway:
+    image: gateway-service
+    build:
+      context: ./gateway_service
+    container_name: gateway-service
+    depends_on:
+      discovery-service:
+        condition: service_started
+      config-server:
+        condition: service_started
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-service:8761/eureka/
+      # Включаем регистрацию
+      SPRING_CLOUD_CONFIG_SERVER_BOOTSTRAP: "true"
+      # искать config-server через discovery
+      SPRING_CLOUD_CONFIG_DISCOVERY_ENABLED: "true"
+      SPRING_CLOUD_CONFIG_DISCOVERY_SERVICE_ID: config-server
+    networks:
+      - app-network
+    ports:
+      - "8080:8080" # Входная точка для клиента
+
+networks:
+  app-network:
+    driver: bridge # Создает изолированную виртуальную сеть
+    
